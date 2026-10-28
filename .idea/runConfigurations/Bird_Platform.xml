@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Bird Platform" type="CompoundRunConfigurationType" factoryName="Compound Run Configuration">
+    <toRun type="PythonConfigurationType" name="AI Server" />
+    <toRun type="PythonConfigurationType" name="Central Server" />
+    <method v="2" />
+  </configuration>
+</component>

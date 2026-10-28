@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Full Stack" type="CompoundRunConfigurationType" factoryName="Compound Run Configuration">
+    <toRun type="PythonConfigurationType" name="AI Server" />
+    <toRun type="PythonConfigurationType" name="Central Server" />
+    <toRun type="js.build_tools.npm" name="Web App" />
+    <method v="2" />
+  </configuration>
+</component>

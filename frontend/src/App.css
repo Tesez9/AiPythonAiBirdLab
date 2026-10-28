@@ -1,0 +1,309 @@
+body {
+  margin: 0;
+  background: #f2f2f2;
+  color: #222;
+  font-family: Arial, sans-serif;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #333;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.header p {
+  margin: 4px 0 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.health {
+  padding: 4px 8px;
+  border: 1px solid #999;
+  background: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.health.ok {
+  color: #136b2f;
+  border-color: #136b2f;
+}
+
+.health.bad {
+  color: #a00000;
+  border-color: #a00000;
+}
+
+.message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid #999;
+  background: #fff;
+  font-size: 14px;
+}
+
+.message.error {
+  border-color: #b00000;
+  background: #ffecec;
+}
+
+.message.notice {
+  border-color: #247a3d;
+  background: #eaffea;
+}
+
+.message button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #333;
+  text-decoration: underline;
+}
+
+.card {
+  margin-bottom: 15px;
+  padding: 15px;
+  border: 1px solid #bbb;
+  background: #fff;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ddd;
+  font-size: 20px;
+}
+
+.card h3 {
+  margin: 12px 0 6px;
+  font-size: 18px;
+}
+
+.card h4 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+}
+
+.hint {
+  margin: 6px 0;
+  color: #666;
+  font-size: 13px;
+}
+
+.file-name {
+  margin: 6px 0;
+  color: #444;
+  font-size: 13px;
+}
+
+input[type='file'],
+input[type='search'] {
+  padding: 6px;
+  border: 1px solid #999;
+  background: #fff;
+}
+
+button {
+  margin: 3px 3px 3px 0;
+  padding: 7px 12px;
+  border: 1px solid #777;
+  background: #eee;
+  color: #222;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #ddd;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+button.primary {
+  border-color: #244c70;
+  background: #2d5f8b;
+  color: #fff;
+}
+
+button.primary:hover {
+  background: #244c70;
+}
+
+button.danger {
+  color: #a00000;
+}
+
+.link-button {
+  padding: 0 0 0 8px;
+  border: 0;
+  background: transparent;
+  color: #0645ad;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  background: transparent;
+}
+
+.preview,
+.result-image {
+  display: block;
+  max-width: 100%;
+  max-height: 300px;
+  margin: 8px 0;
+  border: 1px solid #ccc;
+}
+
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.search input {
+  flex: 1 1 220px;
+}
+
+.top-list {
+  margin: 6px 0 6px 20px;
+  padding: 0;
+}
+
+.top-list li {
+  margin: 2px 0;
+}
+
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.info-table th,
+.info-table td {
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  text-align: left;
+  vertical-align: top;
+}
+
+.info-table th {
+  width: 170px;
+  background: #f7f7f7;
+  color: #555;
+  font-weight: normal;
+}
+
+.warning {
+  padding: 6px 8px;
+  border: 1px solid #e0c080;
+  background: #fff7e6;
+  color: #8a5200;
+}
+
+.history {
+  display: grid;
+  gap: 6px;
+}
+
+.history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid #ddd;
+}
+
+.history-item.selected {
+  border-color: #2d5f8b;
+  background: #f0f6ff;
+}
+
+.thumb {
+  width: 48px;
+  height: 48px;
+  border: 1px solid #ccc;
+  object-fit: cover;
+}
+
+.thumb.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eee;
+  color: #777;
+  font-size: 12px;
+}
+
+.history-text {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-text strong {
+  font-size: 14px;
+}
+
+.history-text span {
+  color: #666;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.score {
+  min-width: 50px;
+  color: #333;
+  font-size: 13px;
+  text-align: right;
+}
+
+.stats-list {
+  margin: 6px 0 6px 20px;
+  padding: 0;
+}
+
+.stats-list li {
+  margin: 3px 0;
+}
+
+a {
+  color: #0645ad;
+}
+
+@media (max-width: 600px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .info-table th {
+    width: 110px;
+  }
+}
