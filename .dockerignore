@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+.venv
+__pycache__
+*.py[cod]
+.env
+*.log
+
+bird_lab.db
+uploads
+input
+
+frontend
+mobile
+README.md
