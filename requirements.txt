@@ -4,5 +4,6 @@ httpx==0.28.1
 python-multipart==0.0.32
 SQLAlchemy==2.1.5
 python-dotenv==1.2.4
+aio-pika==9.5.7
 transformers==5.20.1
 pillow==13.0.0

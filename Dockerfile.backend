@@ -11,7 +11,7 @@ COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
-COPY backend.py bird_info.json ./
+COPY backend.py rabbit.py bird_info.json ./
 
 RUN mkdir -p uploads input
 

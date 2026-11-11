@@ -29,6 +29,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+from rabbit import rabbit_request
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -224,6 +226,154 @@ def analysis_to_dict(row, full=False):
         data["info"] = parse_json(row.extra_info, None)
 
     return data
+
+
+def get_analyses_data(db, query=None, skip=0, limit=50):
+    rows_query = db.query(Analysis)
+
+    if query:
+        needle = f"%{query.strip()}%"
+        rows_query = rows_query.filter(
+            or_(
+                Analysis.image_name.ilike(needle),
+                Analysis.predicted_species.ilike(needle),
+                Analysis.description.ilike(needle),
+            )
+        )
+
+    total = rows_query.count()
+    rows = (
+        rows_query.order_by(Analysis.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "items": [analysis_to_dict(row) for row in rows],
+    }
+
+
+def get_analysis_data(db, analysis_id):
+    row = db.get(Analysis, analysis_id)
+
+    if row is None:
+        return None
+
+    return analysis_to_dict(row, full=True)
+
+
+def get_analysis_or_404(db, analysis_id):
+    analysis = get_analysis_data(db, analysis_id)
+
+    if analysis is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Analysis not found",
+        )
+
+    return analysis
+
+
+def get_stats_data(db):
+    total = db.query(func.count(Analysis.id)).scalar() or 0
+    unique_species = (
+        db.query(func.count(distinct(Analysis.predicted_species))).scalar()
+        or 0
+    )
+    average = db.query(func.avg(Analysis.confidence)).scalar() or 0
+    highest = (
+        db.query(Analysis)
+        .order_by(Analysis.confidence.desc(), Analysis.id.asc())
+        .first()
+    )
+    lowest = (
+        db.query(Analysis)
+        .order_by(Analysis.confidence.asc(), Analysis.id.asc())
+        .first()
+    )
+    top = (
+        db.query(
+            Analysis.predicted_species,
+            func.count(Analysis.id).label("count"),
+        )
+        .group_by(Analysis.predicted_species)
+        .order_by(
+            func.count(Analysis.id).desc(),
+            Analysis.predicted_species.asc(),
+        )
+        .limit(5)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "unique_species": unique_species,
+        "average_confidence": round(float(average), 4),
+        "highest": analysis_to_dict(highest) if highest else None,
+        "lowest": analysis_to_dict(lowest) if lowest else None,
+        "top_species": [
+            {"species": species, "count": count}
+            for species, count in top
+        ],
+    }
+
+
+def build_csv_content(db):
+    rows = db.query(Analysis).order_by(Analysis.id).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(
+        [
+            "image_name",
+            "predicted_species",
+            "confidence",
+            "analysis_date",
+            "description",
+        ]
+    )
+
+    for row in rows:
+        writer.writerow(
+            [
+                row.image_name,
+                row.predicted_species,
+                f"{row.confidence:.4f}",
+                row.analysis_date.isoformat()
+                if row.analysis_date
+                else "",
+                row.description,
+            ]
+        )
+
+    return output.getvalue()
+
+
+def get_birds_data(db):
+    rows = db.query(BirdInfo).order_by(BirdInfo.species.asc()).all()
+    return [bird_info_to_dict(row) for row in rows]
+
+
+async def call_worker(data, fallback):
+    try:
+        result = await rabbit_request(data)
+    except Exception as error:
+        print(
+            "RabbitMQ unavailable, using database fallback:",
+            error,
+            flush=True,
+        )
+        return fallback()
+
+    if isinstance(result, dict) and "__error__" in result:
+        raise HTTPException(
+            status_code=int(result.get("__status__", 500)),
+            detail=result["__error__"],
+        )
+
+    return result
 
 
 async def call_ai(filename, content_type, data):
@@ -485,49 +635,32 @@ async def create_analyses(
 
 
 @app.get("/api/analyses")
-def list_analyses(
+async def list_analyses(
     query: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db=Depends(get_db),
 ):
-    rows_query = db.query(Analysis)
-
-    if query:
-        needle = f"%{query.strip()}%"
-        rows_query = rows_query.filter(
-            or_(
-                Analysis.image_name.ilike(needle),
-                Analysis.predicted_species.ilike(needle),
-                Analysis.description.ilike(needle),
-            )
-        )
-
-    total = rows_query.count()
-    rows = (
-        rows_query.order_by(Analysis.id.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
+    return await call_worker(
+        {
+            "action": "history",
+            "query": query,
+            "skip": skip,
+            "limit": limit,
+        },
+        lambda: get_analyses_data(db, query, skip, limit),
     )
-
-    return {
-        "total": total,
-        "items": [analysis_to_dict(row) for row in rows],
-    }
 
 
 @app.get("/api/analyses/{analysis_id}")
-def get_analysis(analysis_id: int, db=Depends(get_db)):
-    row = db.get(Analysis, analysis_id)
-
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Analysis not found",
-        )
-
-    return analysis_to_dict(row, full=True)
+async def get_analysis(analysis_id: int, db=Depends(get_db)):
+    return await call_worker(
+        {
+            "action": "analysis",
+            "id": analysis_id,
+        },
+        lambda: get_analysis_or_404(db, analysis_id),
+    )
 
 
 @app.delete("/api/analyses/{analysis_id}")
@@ -551,80 +684,20 @@ def delete_analysis(analysis_id: int, db=Depends(get_db)):
 
 
 @app.get("/api/stats")
-def stats(db=Depends(get_db)):
-    total = db.query(func.count(Analysis.id)).scalar() or 0
-    unique_species = (
-        db.query(func.count(distinct(Analysis.predicted_species))).scalar()
-        or 0
+async def stats(db=Depends(get_db)):
+    return await call_worker(
+        {"action": "stats"},
+        lambda: get_stats_data(db),
     )
-    average = db.query(func.avg(Analysis.confidence)).scalar() or 0
-    highest = (
-        db.query(Analysis)
-        .order_by(Analysis.confidence.desc(), Analysis.id.asc())
-        .first()
-    )
-    lowest = (
-        db.query(Analysis)
-        .order_by(Analysis.confidence.asc(), Analysis.id.asc())
-        .first()
-    )
-    top = (
-        db.query(
-            Analysis.predicted_species,
-            func.count(Analysis.id).label("count"),
-        )
-        .group_by(Analysis.predicted_species)
-        .order_by(
-            func.count(Analysis.id).desc(),
-            Analysis.predicted_species.asc(),
-        )
-        .limit(5)
-        .all()
-    )
-
-    return {
-        "total": total,
-        "unique_species": unique_species,
-        "average_confidence": round(float(average), 4),
-        "highest": analysis_to_dict(highest) if highest else None,
-        "lowest": analysis_to_dict(lowest) if lowest else None,
-        "top_species": [
-            {"species": species, "count": count}
-            for species, count in top
-        ],
-    }
 
 
 @app.get("/api/export.csv")
-def export_csv(db=Depends(get_db)):
-    rows = db.query(Analysis).order_by(Analysis.id).all()
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    writer.writerow(
-        [
-            "image_name",
-            "predicted_species",
-            "confidence",
-            "analysis_date",
-            "description",
-        ]
+async def export_csv(db=Depends(get_db)):
+    result = await call_worker(
+        {"action": "export"},
+        lambda: {"csv": build_csv_content(db)},
     )
-
-    for row in rows:
-        writer.writerow(
-            [
-                row.image_name,
-                row.predicted_species,
-                f"{row.confidence:.4f}",
-                row.analysis_date.isoformat()
-                if row.analysis_date
-                else "",
-                row.description,
-            ]
-        )
-
-    content = "\ufeff" + output.getvalue()
+    content = "\ufeff" + result["csv"]
 
     return Response(
         content=content,
@@ -636,9 +709,11 @@ def export_csv(db=Depends(get_db)):
 
 
 @app.get("/api/birds")
-def list_birds(db=Depends(get_db)):
-    rows = db.query(BirdInfo).order_by(BirdInfo.species.asc()).all()
-    return [bird_info_to_dict(row) for row in rows]
+async def list_birds(db=Depends(get_db)):
+    return await call_worker(
+        {"action": "birds"},
+        lambda: get_birds_data(db),
+    )
 
 
 @app.get("/api/birds/{species}")

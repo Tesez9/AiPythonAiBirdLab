@@ -1,4 +1,19 @@
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: bird
+      RABBITMQ_DEFAULT_PASS: birdpass
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   ai_server:
     build:
       context: .
@@ -23,6 +38,24 @@ services:
       start_period: 180s
     restart: unless-stopped
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      RABBIT_URL: amqp://bird:birdpass@rabbitmq/
+      DATABASE_URL: sqlite:////app/bird_lab.db
+      UPLOAD_DIR: /app/uploads
+      BIRD_INFO_FILE: /app/bird_info.json
+    volumes:
+      - ./bird_lab.db:/app/bird_lab.db
+      - ./uploads:/app/uploads
+      - ./input:/app/input:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -32,6 +65,9 @@ services:
     environment:
       AI_SERVER_URL: http://ai_server:8001
       DATABASE_URL: sqlite:////app/bird_lab.db
+      RABBIT_URL: amqp://bird:birdpass@rabbitmq/
+      UPLOAD_DIR: /app/uploads
+      BIRD_INFO_FILE: /app/bird_info.json
     volumes:
       - ./bird_lab.db:/app/bird_lab.db
       - ./uploads:/app/uploads
@@ -39,6 +75,10 @@ services:
     depends_on:
       ai_server:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      worker:
+        condition: service_started
     healthcheck:
       test:
         [
