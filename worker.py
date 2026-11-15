@@ -6,10 +6,9 @@ import time
 import aio_pika
 from sqlalchemy import inspect
 
-from backend import (
-    SessionLocal,
+from app.database import SessionLocal, engine
+from app.repository import (
     build_csv_content,
-    engine,
     get_analyses_data,
     get_analysis_data,
     get_birds_data,
