@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import INPUT_DIR, UPLOAD_DIR
 from app.database import Base, SessionLocal, engine, ensure_schema
-from app.routers import analyses, birds, stats, system
+from app.routers import analyses, birds, payments, stats, system
 from app.seed import seed_bird_info
 
 
@@ -50,6 +50,7 @@ if INPUT_DIR.is_dir():
 
 app.include_router(system.router)
 app.include_router(analyses.router)
+app.include_router(payments.router)
 app.include_router(stats.router)
 app.include_router(birds.router)
 

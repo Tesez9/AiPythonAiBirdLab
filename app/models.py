@@ -35,3 +35,27 @@ class Analysis(Base):
     description = Column(Text)
     source = Column(String(255))
     extra_info = Column(Text)
+
+
+class WalletCredit(Base):
+    __tablename__ = "wallet_credits"
+
+    wallet_address = Column(String(42), primary_key=True)
+    credits = Column(Integer, nullable=False, default=0)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class UsedTransaction(Base):
+    __tablename__ = "used_transactions"
+
+    transaction_hash = Column(String(66), primary_key=True)
+    wallet_address = Column(String(42), nullable=False, index=True)
+    credits = Column(Integer, nullable=False)
+    amount_wei = Column(String(78), nullable=False)
+    block_number = Column(Integer)
+    chain_id = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

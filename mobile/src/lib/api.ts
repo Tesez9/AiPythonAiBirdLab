@@ -37,6 +37,7 @@ export type Analysis = {
   source: string | null
   top3?: Prediction[]
   info?: BirdInfo | null
+  credits_left?: number
 }
 
 export type AnalysisPage = {
@@ -63,6 +64,39 @@ export type Health = {
   database: string
   ai_server: string
   ai_url: string
+}
+
+export type PaymentConfig = {
+  enabled: boolean
+  chain_id: number
+  chain_name: string
+  receiver: string
+  price_wei: string
+  price_eth: string
+  credits: number
+  confirmations: number
+  explorer_url: string
+  public_rpc_url: string
+}
+
+export type WalletInfo = {
+  wallet_address: string
+  credits: number
+  price_wei: string
+  package_credits: number
+  last_transaction_hash: string | null
+}
+
+export type PaymentResult = {
+  status: 'credited' | 'already_processed' | 'pending'
+  credits?: number
+  transaction_hash: string
+  amount_wei?: string
+  block_number?: number
+  confirmations?: number
+  required?: number
+  message?: string
+  transactions?: string[]
 }
 
 function expoHost(): string | null {
@@ -115,7 +149,27 @@ function errorFromBody(body: { detail?: unknown }, status: number): string {
       .join('; ')
   }
 
+  if (
+    typeof body.detail === 'object' &&
+    body.detail !== null &&
+    'message' in body.detail
+  ) {
+    return String(body.detail.message)
+  }
+
   return `Помилка запиту (HTTP ${status})`
+}
+
+export class ApiError extends Error {
+  status: number
+  detail: unknown
+
+  constructor(status: number, message: string, detail?: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
 }
 
 export async function requestJson<T>(
@@ -125,18 +179,18 @@ export async function requestJson<T>(
   const response = await fetch(`${API_BASE}${path}`, init)
 
   if (!response.ok) {
+    let detail: unknown = null
     let message = `Помилка запиту (HTTP ${response.status})`
 
     try {
-      message = errorFromBody(
-        (await response.json()) as { detail?: unknown },
-        response.status,
-      )
+      const body = (await response.json()) as { detail?: unknown }
+      detail = body.detail ?? null
+      message = errorFromBody(body, response.status)
     } catch {
       // The server did not return JSON; keep the status-based message.
     }
 
-    throw new Error(message)
+    throw new ApiError(response.status, message, detail)
   }
 
   return (await response.json()) as T
@@ -153,6 +207,37 @@ export async function fetchHealth(): Promise<Health> {
   } finally {
     clearTimeout(timer)
   }
+}
+
+export function fetchPaymentConfig(): Promise<PaymentConfig> {
+  return requestJson<PaymentConfig>('/api/payments/config')
+}
+
+export function fetchWallet(address: string): Promise<WalletInfo> {
+  return requestJson<WalletInfo>(`/api/wallet/${address}`)
+}
+
+export function verifyPayment(
+  walletAddress: string,
+  transactionHash: string,
+): Promise<PaymentResult> {
+  return requestJson<PaymentResult>('/api/payments/verify', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      wallet_address: walletAddress,
+      transaction_hash: transactionHash,
+    }),
+  })
+}
+
+export function checkPayments(address: string): Promise<PaymentResult> {
+  return requestJson<PaymentResult>(`/api/payments/check/${address}`, {
+    method: 'POST',
+  })
 }
 
 export async function listAnalyses(query = ''): Promise<AnalysisPage> {
@@ -184,7 +269,10 @@ function extensionForMime(mimeType?: string): string {
   return mimeType === 'image/png' ? '.png' : '.jpg'
 }
 
-export async function analyzeImage(asset: ImagePickerAsset): Promise<Analysis> {
+export async function analyzeImage(
+  asset: ImagePickerAsset,
+  walletAddress?: string | null,
+): Promise<Analysis> {
   const file = new File(asset.uri)
   const mimeType = asset.mimeType || file.type || 'image/jpeg'
   const fallbackName = `photo_${Date.now()}${extensionForMime(mimeType)}`
@@ -195,6 +283,10 @@ export async function analyzeImage(asset: ImagePickerAsset): Promise<Analysis> {
   const formData = new FormData()
 
   formData.append('file', file, uploadName)
+
+  if (walletAddress) {
+    formData.append('wallet_address', walletAddress)
+  }
 
   return requestJson<Analysis>('/api/analyses', {
     method: 'POST',

@@ -1,9 +1,10 @@
 import csv
 import io
 
-from sqlalchemy import distinct, func, or_
+from sqlalchemy import distinct, func, or_, update
+from sqlalchemy.exc import IntegrityError
 
-from app.models import Analysis, BirdInfo
+from app.models import Analysis, BirdInfo, UsedTransaction, WalletCredit
 from app.serializers import analysis_to_dict, bird_info_to_dict
 
 
@@ -132,3 +133,129 @@ def build_csv_content(db):
 def get_birds_data(db):
     rows = db.query(BirdInfo).order_by(BirdInfo.species.asc()).all()
     return [bird_info_to_dict(row) for row in rows]
+
+
+def normalize_address(value):
+    return (value or "").strip().lower()
+
+
+def get_wallet(db, wallet_address):
+    return db.get(WalletCredit, normalize_address(wallet_address))
+
+
+def get_credits(db, wallet_address):
+    wallet = get_wallet(db, wallet_address)
+    return wallet.credits if wallet else 0
+
+
+def get_or_create_wallet(db, wallet_address):
+    address = normalize_address(wallet_address)
+    wallet = db.get(WalletCredit, address)
+
+    if wallet is not None:
+        return wallet
+
+    wallet = WalletCredit(wallet_address=address, credits=0)
+    db.add(wallet)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        wallet = db.get(WalletCredit, address)
+    else:
+        db.refresh(wallet)
+
+    return wallet
+
+
+def reserve_credit(db, wallet_address):
+    address = normalize_address(wallet_address)
+    result = db.execute(
+        update(WalletCredit)
+        .where(
+            WalletCredit.wallet_address == address,
+            WalletCredit.credits > 0,
+        )
+        .values(credits=WalletCredit.credits - 1)
+    )
+    db.commit()
+    return result.rowcount > 0
+
+
+def refund_credit(db, wallet_address):
+    wallet = get_or_create_wallet(db, wallet_address)
+    wallet.credits += 1
+    db.commit()
+    db.refresh(wallet)
+    return wallet.credits
+
+
+def get_transaction(db, transaction_hash):
+    return db.get(
+        UsedTransaction,
+        (transaction_hash or "").strip().lower(),
+    )
+
+
+def get_last_transaction(db, wallet_address):
+    address = normalize_address(wallet_address)
+    return (
+        db.query(UsedTransaction)
+        .filter(UsedTransaction.wallet_address == address)
+        .order_by(UsedTransaction.created_at.desc())
+        .first()
+    )
+
+
+def credit_payment(
+    db,
+    transaction_hash,
+    wallet_address,
+    credits,
+    amount_wei,
+    block_number,
+    chain_id,
+):
+    tx_hash = (transaction_hash or "").strip().lower()
+    address = normalize_address(wallet_address)
+    existing = db.get(UsedTransaction, tx_hash)
+
+    if existing is not None:
+        return existing, get_credits(db, address)
+
+    wallet = db.get(WalletCredit, address)
+
+    if wallet is None:
+        wallet = WalletCredit(wallet_address=address, credits=0)
+        db.add(wallet)
+
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            wallet = db.get(WalletCredit, address)
+
+    if wallet is None:
+        wallet = get_or_create_wallet(db, address)
+
+    transaction = UsedTransaction(
+        transaction_hash=tx_hash,
+        wallet_address=address,
+        credits=credits,
+        amount_wei=str(amount_wei),
+        block_number=block_number,
+        chain_id=chain_id,
+    )
+    db.add(transaction)
+    wallet.credits += credits
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.get(UsedTransaction, tx_hash)
+        return existing, get_credits(db, address)
+
+    db.refresh(wallet)
+    return transaction, wallet.credits

@@ -1,10 +1,18 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 
-from app.config import UPLOAD_DIR
+from app.config import PAYMENT_ENABLED, UPLOAD_DIR
 from app.database import get_db
 from app.models import Analysis
 from app.rabbit_client import call_worker
-from app.repository import get_analyses_data
+from app.repository import get_analyses_data, get_credits
 from app.services import analyze_file, get_analysis_or_404
 
 router = APIRouter(prefix="/api/analyses", tags=["analyses"])
@@ -13,14 +21,16 @@ router = APIRouter(prefix="/api/analyses", tags=["analyses"])
 @router.post("", status_code=201)
 async def create_analysis(
     file: UploadFile = File(...),
+    wallet_address: str | None = Form(None),
     db=Depends(get_db),
 ):
-    return await analyze_file(file, db)
+    return await analyze_file(file, db, wallet_address)
 
 
 @router.post("/batch", status_code=201)
 async def create_analyses(
     files: list[UploadFile] = File(...),
+    wallet_address: str | None = Form(None),
     db=Depends(get_db),
 ):
     items = []
@@ -28,7 +38,7 @@ async def create_analyses(
 
     for file in files:
         try:
-            items.append(await analyze_file(file, db))
+            items.append(await analyze_file(file, db, wallet_address))
         except HTTPException as error:
             errors.append(
                 {
@@ -37,11 +47,16 @@ async def create_analyses(
                 }
             )
 
-    return {
+    response = {
         "total": len(items),
         "items": items,
         "errors": errors,
     }
+
+    if PAYMENT_ENABLED and wallet_address:
+        response["credits_left"] = get_credits(db, wallet_address)
+
+    return response
 
 
 @router.get("")

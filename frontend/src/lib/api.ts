@@ -37,6 +37,7 @@ export type Analysis = {
     source: string | null
     top3?: Prediction[]
     info?: BirdInfo | null
+    credits_left?: number
 }
 
 export type AnalysisPage = {
@@ -63,6 +64,39 @@ export type Health = {
     database: string
     ai_server: string
     ai_url: string
+}
+
+export type PaymentConfig = {
+    enabled: boolean
+    chain_id: number
+    chain_name: string
+    receiver: string
+    price_wei: string
+    price_eth: string
+    credits: number
+    confirmations: number
+    explorer_url: string
+    public_rpc_url: string
+}
+
+export type WalletInfo = {
+    wallet_address: string
+    credits: number
+    price_wei: string
+    package_credits: number
+    last_transaction_hash: string | null
+}
+
+export type PaymentResult = {
+    status: 'credited' | 'already_processed' | 'pending'
+    credits?: number
+    transaction_hash: string
+    amount_wei?: string
+    block_number?: number
+    confirmations?: number
+    required?: number
+    message?: string
+    transactions?: string[]
 }
 
 export function assetUrl(path: string | null | undefined): string | null {
@@ -95,33 +129,56 @@ export function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : 'Невідома помилка'
 }
 
+export class ApiError extends Error {
+    status: number
+    detail: unknown
+
+    constructor(status: number, message: string, detail?: unknown) {
+        super(message)
+        this.name = 'ApiError'
+        this.status = status
+        this.detail = detail
+    }
+}
+
+function detailMessage(detail: unknown, status: number): string {
+    if (typeof detail === 'string') {
+        return detail
+    }
+
+    if (Array.isArray(detail)) {
+        return detail
+            .map((entry) => {
+                if (typeof entry === 'object' && entry !== null && 'msg' in entry) {
+                    return String(entry.msg)
+                }
+
+                return String(entry)
+            })
+            .join('; ')
+    }
+
+    if (typeof detail === 'object' && detail !== null && 'message' in detail) {
+        return String(detail.message)
+    }
+
+    return `Помилка запиту (HTTP ${status})`
+}
+
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, init)
 
     if (!response.ok) {
-        let message = `Помилка запиту (HTTP ${response.status})`
+        let detail: unknown = null
 
         try {
             const body = (await response.json()) as { detail?: unknown }
-
-            if (typeof body.detail === 'string') {
-                message = body.detail
-            } else if (Array.isArray(body.detail)) {
-                message = body.detail
-                    .map((entry) => {
-                        if (typeof entry === 'object' && entry !== null && 'msg' in entry) {
-                            return String(entry.msg)
-                        }
-
-                        return String(entry)
-                    })
-                    .join('; ')
-            }
+            detail = body.detail ?? null
         } catch {
-            message = `Помилка запиту (HTTP ${response.status})`
+            detail = null
         }
 
-        throw new Error(message)
+        throw new ApiError(response.status, detailMessage(detail, response.status), detail)
     }
 
     return (await response.json()) as T
@@ -146,13 +203,45 @@ export function fetchHealth(): Promise<Health> {
     return requestJson<Health>('/health')
 }
 
+export function fetchPaymentConfig(): Promise<PaymentConfig> {
+    return requestJson<PaymentConfig>('/api/payments/config')
+}
+
+export function fetchWallet(address: string): Promise<WalletInfo> {
+    return requestJson<WalletInfo>(`/api/wallet/${address}`)
+}
+
+export function verifyPayment(
+    walletAddress: string,
+    transactionHash: string,
+): Promise<PaymentResult> {
+    return requestJson<PaymentResult>('/api/payments/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            wallet_address: walletAddress,
+            transaction_hash: transactionHash,
+        }),
+    })
+}
+
+export function checkPayments(address: string): Promise<PaymentResult> {
+    return requestJson<PaymentResult>(`/api/payments/check/${address}`, {
+        method: 'POST',
+    })
+}
+
 export function fetchAnalysis(id: number): Promise<Analysis> {
     return requestJson<Analysis>(`/api/analyses/${id}`)
 }
 
-export function analyzePhoto(file: File): Promise<Analysis> {
+export function analyzePhoto(file: File, walletAddress?: string | null): Promise<Analysis> {
     const formData = new FormData()
     formData.append('file', file)
+
+    if (walletAddress) {
+        formData.append('wallet_address', walletAddress)
+    }
 
     return requestJson<Analysis>('/api/analyses', { method: 'POST', body: formData })
 }

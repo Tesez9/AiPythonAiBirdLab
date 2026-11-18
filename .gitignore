@@ -12,12 +12,24 @@ venv/
 !.idea/runConfigurations/
 
 # Frontend
-frontend/node_modules/
+node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/coverage-web/
+mobile/coverage-native/
 *.local
+
+# Test caches
+.pytest_cache/
+backend/tests/__pycache__/
+.coverage
+.coverage.*
+htmlcov/
 
 # Logs and OS files
 *.log
 Thumbs.db
 .DS_Store
+
+# Local Anvil chain state
+.anvil-state.json

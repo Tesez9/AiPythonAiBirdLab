@@ -1,14 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
+  AppState,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker'
+import * as Linking from 'expo-linking'
 import { useRouter } from 'expo-router'
 
 import { AnalysisResult } from '@/components/AnalysisResult'
@@ -23,15 +27,33 @@ import {
 } from '@/components/ui'
 import {
   analyzeImage,
+  ApiError,
   API_BASE,
   assetName,
+  checkPayments,
   fetchHealth,
+  fetchPaymentConfig,
+  fetchWallet,
   type Analysis,
   type Health,
+  type PaymentConfig,
+  type PaymentResult,
+  type WalletInfo,
   validateImageAsset,
 } from '@/lib/api'
 import { errorMessage, formatBytes } from '@/lib/format'
+import {
+  creditsLabel,
+  isValidAddress,
+  metamaskPaymentUrl,
+  normalizeAddress,
+  shortAddress,
+} from '@/lib/wallet'
 import { colors, radii } from '@/lib/theme'
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
 
 export default function AnalyzeScreen() {
   const router = useRouter()
@@ -41,6 +63,115 @@ export default function AnalyzeScreen() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null)
+  const [walletAddress, setWalletAddress] = useState('')
+  const [walletInput, setWalletInput] = useState('')
+  const [wallet, setWallet] = useState<WalletInfo | null>(null)
+  const [isSavingWallet, setIsSavingWallet] = useState(false)
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false)
+  const [awaitingPayment, setAwaitingPayment] = useState(false)
+
+  const checkWalletPayment = useCallback(
+    async (address: string, waitForConfirmation = false) => {
+      setIsCheckingPayment(true)
+      setError(null)
+      setNotice(null)
+
+      const attempts = waitForConfirmation ? 20 : 1
+
+      try {
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+          let result: PaymentResult
+
+          try {
+            result = await checkPayments(address)
+          } catch (checkError) {
+            if (
+              waitForConfirmation &&
+              checkError instanceof ApiError &&
+              checkError.status === 404 &&
+              attempt < attempts - 1
+            ) {
+              setNotice('Очікуємо підтвердження транзакції...')
+              await wait(1500)
+              continue
+            }
+
+            throw checkError
+          }
+
+          if (result.status === 'pending') {
+            setNotice(
+              `Транзакція ще не підтверджена: ${
+                result.confirmations ?? 0
+              }/${result.required ?? 1}.`,
+            )
+
+            if (waitForConfirmation && attempt < attempts - 1) {
+              await wait(1500)
+              continue
+            }
+
+            return
+          }
+
+          setWallet(await fetchWallet(address))
+          setNotice(`Оплату зараховано: ${creditsLabel(result.credits ?? 0)}.`)
+          return
+        }
+      } catch (checkError) {
+        if (checkError instanceof ApiError && checkError.status === 404) {
+          setError(
+            'Нову оплату не знайдено. Переконайтеся, що транзакція підтверджена.',
+          )
+        } else {
+          setError(errorMessage(checkError))
+        }
+      } finally {
+        setIsCheckingPayment(false)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    let active = true
+
+    async function loadPayments() {
+      try {
+        const config = await fetchPaymentConfig()
+
+        if (active) {
+          setPaymentConfig(config)
+        }
+      } catch {
+        if (active) {
+          setPaymentConfig(null)
+        }
+      }
+    }
+
+    void loadPayments()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!awaitingPayment || !walletAddress) {
+      return
+    }
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        setAwaitingPayment(false)
+        void checkWalletPayment(walletAddress, true)
+      }
+    })
+
+    return () => subscription.remove()
+  }, [awaitingPayment, walletAddress, checkWalletPayment])
 
   useEffect(() => {
     let active = true
@@ -118,9 +249,66 @@ export default function AnalyzeScreen() {
     }
   }
 
+  async function handleSaveWallet() {
+    const address = normalizeAddress(walletInput)
+
+    if (!isValidAddress(address)) {
+      setError('Введіть коректну адресу гаманця у форматі 0x...')
+      return
+    }
+
+    setIsSavingWallet(true)
+    setError(null)
+    setNotice(null)
+
+    try {
+      const info = await fetchWallet(address)
+
+      setWalletAddress(address)
+      setWallet(info)
+      setWalletInput(address)
+      setNotice(`Гаманець збережено. ${creditsLabel(info.credits)}.`)
+    } catch (walletError) {
+      setError(errorMessage(walletError))
+    } finally {
+      setIsSavingWallet(false)
+    }
+  }
+
+  async function handlePay() {
+    if (!paymentConfig) {
+      return
+    }
+
+    if (!walletAddress) {
+      setError('Спочатку збережіть адресу гаманця.')
+      return
+    }
+
+    setError(null)
+    setNotice(null)
+
+    try {
+      await Linking.openURL(metamaskPaymentUrl(paymentConfig))
+      setAwaitingPayment(true)
+      setNotice(
+        'Підтвердіть оплату в MetaMask. Після повернення в застосунок баланс перевіриться автоматично.',
+      )
+    } catch {
+      setError(
+        'Не вдалося відкрити MetaMask. Перевірте, чи встановлений застосунок MetaMask.',
+      )
+    }
+  }
+
   async function handleAnalyze() {
     if (!asset) {
       setError('Спочатку виберіть фото птаха.')
+      return
+    }
+
+    if (paymentConfig?.enabled && !walletAddress) {
+      setError('Збережіть адресу гаманця, щоб оплатити аналіз.')
       return
     }
 
@@ -129,13 +317,38 @@ export default function AnalyzeScreen() {
     setNotice(null)
 
     try {
-      const analysis = await analyzeImage(asset)
+      const analysis = await analyzeImage(
+        asset,
+        paymentConfig?.enabled ? walletAddress : null,
+      )
+      const creditsLeft = analysis.credits_left
 
       setResult(analysis)
       setAsset(null)
+
+      if (typeof creditsLeft === 'number' && walletAddress) {
+        setWallet((current) =>
+          current
+            ? { ...current, credits: creditsLeft }
+            : {
+                wallet_address: walletAddress,
+                credits: creditsLeft,
+                price_wei: paymentConfig?.price_wei ?? '',
+                package_credits: paymentConfig?.credits ?? 0,
+                last_transaction_hash: null,
+              },
+        )
+      }
+
       setNotice(`Розпізнано: ${analysis.predicted_species}.`)
     } catch (analyzeError) {
-      setError(errorMessage(analyzeError))
+      if (analyzeError instanceof ApiError && analyzeError.status === 402) {
+        setError(
+          'Оплачені аналізи закінчилися. Придбайте новий пакет через MetaMask.',
+        )
+      } else {
+        setError(errorMessage(analyzeError))
+      }
     } finally {
       setIsAnalyzing(false)
     }
@@ -185,6 +398,89 @@ export default function AnalyzeScreen() {
             style={styles.message}
             tone="success"
           />
+        ) : null}
+
+        {paymentConfig?.enabled ? (
+          <Card style={styles.walletCard}>
+            <SectionTitle
+              subtitle={`${creditsLabel(paymentConfig.credits)} за ${
+                paymentConfig.price_eth
+              } ETH · ${paymentConfig.chain_name}`}
+              title="Оплата аналізів"
+            />
+
+            <Text style={styles.walletLabel}>Адреса гаманця</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setWalletInput}
+              placeholder="0x..."
+              placeholderTextColor={colors.muted}
+              style={styles.walletInput}
+              value={walletInput}
+            />
+
+            <View style={styles.walletRow}>
+              <AppButton
+                compact
+                label={
+                  isSavingWallet
+                    ? 'Перевіряємо...'
+                    : walletAddress
+                      ? 'Оновити гаманець'
+                      : 'Зберегти гаманець'
+                }
+                loading={isSavingWallet}
+                onPress={() => {
+                  void handleSaveWallet()
+                }}
+                style={styles.walletButton}
+                variant="secondary"
+              />
+              {wallet ? (
+                <Pill
+                  label={creditsLabel(wallet.credits)}
+                  tone={wallet.credits > 0 ? 'success' : 'neutral'}
+                />
+              ) : null}
+            </View>
+
+            {walletAddress ? (
+              <Text style={styles.walletAddress}>
+                Гаманець: {shortAddress(walletAddress)}
+              </Text>
+            ) : null}
+
+            <AppButton
+              disabled={!walletAddress || awaitingPayment}
+              icon="ethereum"
+              label={
+                awaitingPayment
+                  ? 'Очікуємо повернення...'
+                  : `Оплатити ${paymentConfig.price_eth} ETH`
+              }
+              onPress={() => {
+                void handlePay()
+              }}
+            />
+
+            <AppButton
+              disabled={!walletAddress}
+              label={isCheckingPayment ? 'Перевіряємо...' : 'Перевірити оплату'}
+              loading={isCheckingPayment}
+              onPress={() => {
+                void checkWalletPayment(walletAddress)
+              }}
+              variant="secondary"
+            />
+
+            <Text style={styles.walletHint}>
+              MetaMask відкриється з готовою транзакцією на{' '}
+              {paymentConfig.receiver}. Переконайтеся, що в MetaMask вибрано
+              той самий акаунт. Після повернення в застосунок баланс
+              перевіриться автоматично.
+            </Text>
+          </Card>
         ) : null}
 
         <Card style={styles.uploadCard}>
@@ -324,6 +620,48 @@ const styles = StyleSheet.create({
   },
   message: {
     marginTop: -2,
+  },
+  walletCard: {
+    gap: 10,
+  },
+  walletLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  walletInput: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    color: colors.text,
+    fontFamily: Platform.select({
+      android: 'monospace',
+      ios: 'Menlo',
+      default: 'monospace',
+    }),
+    fontSize: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  walletRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  walletButton: {
+    flexGrow: 1,
+  },
+  walletAddress: {
+    color: colors.muted,
+    fontSize: 11,
+  },
+  walletHint: {
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 16,
   },
   uploadCard: {
     gap: 12,

@@ -1,0 +1,23 @@
+{
+  "name": "aibirdlab",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run web",
+    "dev:all": "concurrently -n ai,backend,web -c blue,green,magenta \"npm run ai\" \"npm run backend\" \"npm run web\"",
+    "ai": ".venv\\Scripts\\python.exe ai_server.py",
+    "backend": ".venv\\Scripts\\python.exe -m uvicorn backend:app --host 127.0.0.1 --port 8000",
+    "web": "npm --prefix frontend run dev -- --host 127.0.0.1",
+    "test:backend": ".venv\\Scripts\\python.exe -m pytest backend/tests -v",
+    "coverage:backend": ".venv\\Scripts\\python.exe -m pytest backend/tests -q --cov=app --cov-branch --cov-fail-under=70 --cov-report=term-missing",
+    "test:web": "npm --prefix frontend run test:web",
+    "coverage:web": "npm --prefix frontend run coverage:web",
+    "test:native": "npm --prefix mobile run test:native",
+    "coverage:native": "npm --prefix mobile run coverage:native",
+    "test": "npm run test:backend && npm run test:web && npm run test:native",
+    "coverage": "npm run coverage:backend && npm run coverage:web && npm run coverage:native"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
+}

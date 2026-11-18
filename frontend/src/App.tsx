@@ -7,19 +7,48 @@ import HistoryList from './components/HistoryList'
 import Message from './components/Message'
 import StatsPanel from './components/StatsPanel'
 import UploadCard from './components/UploadCard'
+import WalletCard from './components/WalletCard'
 import {
     ACCEPTED_EXTENSIONS,
+    ApiError,
     MAX_FILE_SIZE,
     analyzePhoto,
+    checkPayments,
     deleteAnalysis,
     errorMessage,
     exportCsv,
     fetchAnalyses,
     fetchAnalysis,
     fetchHealth,
+    fetchPaymentConfig,
     fetchStats,
+    fetchWallet,
+    verifyPayment,
 } from './lib/api'
-import type { Analysis, Health, Stats } from './lib/api'
+import type {
+    Analysis,
+    Health,
+    PaymentConfig,
+    PaymentResult,
+    Stats,
+    WalletInfo,
+} from './lib/api'
+import {
+    connectWallet,
+    creditsLabel,
+    ensureChain,
+    getProvider,
+    sendPayment,
+    walletErrorMessage,
+} from './lib/wallet'
+
+const WALLET_STORAGE_KEY = 'aibirdlab.wallet'
+const PAYMENT_POLL_ATTEMPTS = 40
+const PAYMENT_POLL_DELAY = 3000
+
+function wait(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
 
 function App() {
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -40,6 +69,13 @@ function App() {
     const [isLoadingStats, setIsLoadingStats] = useState(true)
     const [isLoadingDetail, setIsLoadingDetail] = useState(false)
     const [isExporting, setIsExporting] = useState(false)
+    const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null)
+    const [wallet, setWallet] = useState<WalletInfo | null>(null)
+    const [walletAddress, setWalletAddress] = useState<string | null>(null)
+    const [txHash, setTxHash] = useState('')
+    const [isConnecting, setIsConnecting] = useState(false)
+    const [isPaying, setIsPaying] = useState(false)
+    const [isChecking, setIsChecking] = useState(false)
 
     useEffect(() => {
         void refreshData('')
@@ -57,6 +93,76 @@ function App() {
             }
         }
     }, [])
+
+    useEffect(() => {
+        void loadPaymentConfig()
+    }, [])
+
+    useEffect(() => {
+        if (!paymentConfig?.enabled) {
+            return
+        }
+
+        const provider = getProvider()
+
+        if (!provider?.on) {
+            return
+        }
+
+        const handleAccountsChanged = (...args: unknown[]) => {
+            const accounts = args[0]
+            const nextAddress =
+                Array.isArray(accounts) && accounts.length > 0
+                    ? String(accounts[0]).toLowerCase()
+                    : null
+
+            setWalletAddress(nextAddress)
+            setWallet(null)
+
+            if (!nextAddress) {
+                window.localStorage.removeItem(WALLET_STORAGE_KEY)
+                return
+            }
+
+            window.localStorage.setItem(WALLET_STORAGE_KEY, nextAddress)
+            void fetchWallet(nextAddress)
+                .then(setWallet)
+                .catch(() => setWallet(null))
+        }
+
+        provider.on('accountsChanged', handleAccountsChanged)
+
+        return () => {
+            provider.removeListener?.('accountsChanged', handleAccountsChanged)
+        }
+    }, [paymentConfig?.enabled])
+
+    async function loadPaymentConfig() {
+        try {
+            const nextConfig = await fetchPaymentConfig()
+            setPaymentConfig(nextConfig)
+
+            if (!nextConfig.enabled) {
+                return
+            }
+
+            const saved = window.localStorage.getItem(WALLET_STORAGE_KEY)
+
+            if (!saved) {
+                return
+            }
+
+            setWalletAddress(saved)
+
+            try {
+                setWallet(await fetchWallet(saved))
+            } catch {
+                setWallet(null)
+            }
+        } catch {
+            setPaymentConfig(null)
+        }
+    }
 
     async function refreshHealth() {
         try {
@@ -82,6 +188,134 @@ function App() {
         } finally {
             setIsLoadingList(false)
             setIsLoadingStats(false)
+        }
+    }
+
+    async function waitForPayment(
+        address: string,
+        hash: string,
+    ): Promise<PaymentResult> {
+        for (let attempt = 0; attempt < PAYMENT_POLL_ATTEMPTS; attempt += 1) {
+            const result = await verifyPayment(address, hash)
+
+            if (result.status !== 'pending') {
+                return result
+            }
+
+            setNotice(
+                `Очікуємо підтвердження: ${result.confirmations ?? 0}/${
+                    result.required ?? 1
+                }.`,
+            )
+
+            await wait(PAYMENT_POLL_DELAY)
+        }
+
+        throw new Error(
+            'Транзакція ще не підтверджена. Перевірте оплату пізніше за хешем транзакції.',
+        )
+    }
+
+    async function handleConnect() {
+        setIsConnecting(true)
+        setError(null)
+        setNotice(null)
+
+        try {
+            const address = await connectWallet()
+
+            window.localStorage.setItem(WALLET_STORAGE_KEY, address)
+            setWalletAddress(address)
+            setWallet(await fetchWallet(address))
+            setNotice('MetaMask підключено.')
+        } catch (walletError) {
+            setError(walletErrorMessage(walletError))
+        } finally {
+            setIsConnecting(false)
+        }
+    }
+
+    async function handlePay() {
+        if (!walletAddress || !paymentConfig) {
+            return
+        }
+
+        setIsPaying(true)
+        setError(null)
+        setNotice(null)
+
+        try {
+            const provider = getProvider()
+
+            if (!provider) {
+                throw new Error(
+                    'MetaMask не знайдено. Встановіть розширення MetaMask у браузері.',
+                )
+            }
+
+            await ensureChain(provider, {
+                chainId: paymentConfig.chain_id,
+                chainName: paymentConfig.chain_name,
+                rpcUrl: paymentConfig.public_rpc_url,
+                explorerUrl: paymentConfig.explorer_url || undefined,
+            })
+
+            const hash = await sendPayment(provider, {
+                from: walletAddress,
+                to: paymentConfig.receiver,
+                valueWei: paymentConfig.price_wei,
+            })
+
+            setTxHash(hash)
+            setNotice('Транзакцію надіслано. Очікуємо підтвердження в мережі...')
+
+            const result = await waitForPayment(walletAddress, hash)
+
+            setWallet(await fetchWallet(walletAddress))
+            setNotice(`Оплату зараховано: ${creditsLabel(result.credits ?? 0)}.`)
+        } catch (walletError) {
+            setError(walletErrorMessage(walletError))
+        } finally {
+            setIsPaying(false)
+        }
+    }
+
+    async function handleCheck() {
+        if (!walletAddress) {
+            return
+        }
+
+        setIsChecking(true)
+        setError(null)
+        setNotice(null)
+
+        try {
+            const hash = txHash.trim()
+            const result = hash
+                ? await verifyPayment(walletAddress, hash)
+                : await checkPayments(walletAddress)
+
+            if (result.status === 'pending') {
+                setNotice(
+                    `Транзакція ще не підтверджена: ${
+                        result.confirmations ?? 0
+                    }/${result.required ?? 1}.`,
+                )
+                return
+            }
+
+            setWallet(await fetchWallet(walletAddress))
+            setNotice(`Оплату зараховано: ${creditsLabel(result.credits ?? 0)}.`)
+        } catch (checkError) {
+            if (checkError instanceof ApiError && checkError.status === 404) {
+                setError(
+                    'Нову оплату не знайдено. Переконайтеся, що транзакція підтверджена.',
+                )
+            } else {
+                setError(errorMessage(checkError))
+            }
+        } finally {
+            setIsChecking(false)
         }
     }
 
@@ -142,16 +376,40 @@ function App() {
             return
         }
 
+        if (paymentConfig?.enabled && !walletAddress) {
+            setError('Підключіть MetaMask, щоб оплатити аналіз.')
+            return
+        }
+
         setIsAnalyzing(true)
         setError(null)
         setNotice(null)
 
         try {
-            const analysis = await analyzePhoto(file)
+            const analysis = await analyzePhoto(
+                file,
+                paymentConfig?.enabled ? walletAddress : null,
+            )
+            const creditsLeft = analysis.credits_left
 
             setActive(analysis)
             setFile(null)
             setPreviewFile(null)
+
+            if (typeof creditsLeft === 'number' && walletAddress) {
+                setWallet((current) =>
+                    current
+                        ? { ...current, credits: creditsLeft }
+                        : {
+                              wallet_address: walletAddress,
+                              credits: creditsLeft,
+                              price_wei: paymentConfig?.price_wei ?? '',
+                              package_credits: paymentConfig?.credits ?? 0,
+                              last_transaction_hash: null,
+                          },
+                )
+            }
+
             setNotice(`Розпізнано: ${analysis.predicted_species}.`)
 
             if (fileInputRef.current) {
@@ -160,7 +418,13 @@ function App() {
 
             await refreshData(appliedQuery)
         } catch (requestError) {
-            setError(errorMessage(requestError))
+            if (requestError instanceof ApiError && requestError.status === 402) {
+                setError(
+                    'Оплачені аналізи закінчилися. Придбайте новий пакет через MetaMask.',
+                )
+            } else {
+                setError(errorMessage(requestError))
+            }
         } finally {
             setIsAnalyzing(false)
         }
@@ -249,6 +513,22 @@ function App() {
             {notice && <Message tone='notice' text={notice} onClose={() => setNotice(null)} />}
 
             <main>
+                {paymentConfig?.enabled && (
+                    <WalletCard
+                        config={paymentConfig}
+                        wallet={wallet}
+                        address={walletAddress}
+                        isConnecting={isConnecting}
+                        isPaying={isPaying}
+                        isChecking={isChecking}
+                        txHash={txHash}
+                        onConnect={() => void handleConnect()}
+                        onPay={() => void handlePay()}
+                        onCheck={() => void handleCheck()}
+                        onTxHashChange={setTxHash}
+                    />
+                )}
+
                 <UploadCard
                     file={file}
                     preview={preview}

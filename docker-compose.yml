@@ -68,6 +68,19 @@ services:
       RABBIT_URL: amqp://bird:birdpass@rabbitmq/
       UPLOAD_DIR: /app/uploads
       BIRD_INFO_FILE: /app/bird_info.json
+      PAYMENT_ENABLED: ${PAYMENT_ENABLED:-true}
+      ETH_RPC_URL: ${DOCKER_ETH_RPC_URL:-http://host.docker.internal:8545}
+      PAYMENT_RECEIVER_ADDRESS: ${PAYMENT_RECEIVER_ADDRESS:-0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f}
+      PAYMENT_CHAIN_ID: ${PAYMENT_CHAIN_ID:-31337}
+      PAYMENT_PRICE_WEI: ${PAYMENT_PRICE_WEI:-2000000000000000}
+      PAYMENT_CREDITS: ${PAYMENT_CREDITS:-5}
+      PAYMENT_CONFIRMATIONS: ${PAYMENT_CONFIRMATIONS:-1}
+      PAYMENT_SCAN_BLOCKS: ${PAYMENT_SCAN_BLOCKS:-100}
+      PAYMENT_PUBLIC_RPC_URL: ${PAYMENT_PUBLIC_RPC_URL:-http://127.0.0.1:8545}
+      PAYMENT_CHAIN_NAME: ${PAYMENT_CHAIN_NAME:-Test Net}
+      PAYMENT_EXPLORER_URL: ${PAYMENT_EXPLORER_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./bird_lab.db:/app/bird_lab.db
       - ./uploads:/app/uploads

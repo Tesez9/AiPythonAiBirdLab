@@ -293,6 +293,55 @@ button.danger {
   margin: 3px 0;
 }
 
+.wallet {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wallet-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wallet-address {
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.wallet-credits {
+  padding: 3px 8px;
+  border: 1px solid #247a3d;
+  background: #eaffea;
+  color: #136b2f;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.wallet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wallet-actions input {
+  flex: 1 1 240px;
+  padding: 6px;
+  border: 1px solid #999;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
+.wallet-note {
+  margin: 0;
+  color: #666;
+  font-size: 13px;
+}
+
 a {
   color: #0645ad;
 }
